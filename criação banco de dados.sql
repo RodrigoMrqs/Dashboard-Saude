@@ -92,17 +92,17 @@ CREATE TABLE notificacao (
 );
 
 CREATE TABLE notificacao_sintoma (
+	id SERIAL PRIMARY KEY,
     notificacao_id INT REFERENCES notificacao(id) ON DELETE CASCADE,
 	outro_sintoma_id INT REFERENCES outro_sintoma(id),
-    sintoma_id INT REFERENCES sintoma(id),
-    PRIMARY KEY (notificacao_id, sintoma_id, outro_sintoma_id)
+    sintoma_id INT REFERENCES sintoma(id)
 );
 
 CREATE TABLE notificacao_condicao (
+	id SERIAL PRIMARY KEY,
     notificacao_id INT REFERENCES notificacao(id) ON DELETE CASCADE,
 	outras_condicoes_id INT REFERENCES outras_condicoes(id),
-    condicoes_id INT REFERENCES condicoes(id),
-    PRIMARY KEY (notificacao_id, condicoes_id, outras_condicoes_id)
+    condicoes_id INT REFERENCES condicoes(id)
 );
 
 CREATE TABLE teste (
@@ -145,15 +145,15 @@ CREATE TABLE triagem_populacao (
 );
 
 CREATE TABLE notificacao_municipio (
+	id SERIAL PRIMARY KEY,
     notificacao_id INT REFERENCES notificacao(id) ON DELETE CASCADE,
-	municipio_id INT REFERENCES municipio(id),
-    PRIMARY KEY (notificacao_id, municipio_id)
+	municipio_id INT REFERENCES municipio(id)
 );
 
 CREATE TABLE notificacao_busca_ativa (
+	id SERIAL PRIMARY KEY,
     notificacao_id INT REFERENCES notificacao(id) ON DELETE CASCADE,
-	busca_ativa_id INT REFERENCES busca_ativa(id),
-    PRIMARY KEY (notificacao_id, busca_ativa_id)
+	busca_ativa_id INT REFERENCES busca_ativa(id)
 );
 
 CREATE TABLE local_testagem (
