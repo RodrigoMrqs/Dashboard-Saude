@@ -1,11 +1,11 @@
 CREATE TABLE sexo (
     id SERIAL PRIMARY KEY,
-    descricao VARCHAR(20) UNIQUE NOT NULL
+    descricao VARCHAR UNIQUE NOT NULL
 );
 
 CREATE TABLE raca_cor (
     id SERIAL PRIMARY KEY,
-    descricao VARCHAR(30) UNIQUE NOT NULL
+    descricao VARCHAR UNIQUE NOT NULL
 );
 
 CREATE TABLE condicoes (
@@ -21,9 +21,9 @@ CREATE TABLE outras_condicoes (
 CREATE TABLE estado (
     id SERIAL PRIMARY KEY,
     nome VARCHAR(50),
-	estado_ibge VARCHAR(10),
-    estado_notificacao VARCHAR(10),
-	estado_notificacao_ibge VARCHAR(10),
+	estado_ibge VARCHAR(30),
+    estado_notificacao VARCHAR(30),
+	estado_notificacao_ibge VARCHAR(30),
     sigla VARCHAR(2) UNIQUE
 );
 
@@ -37,8 +37,8 @@ CREATE TABLE busca_ativa (
 
 CREATE TABLE municipio (
     id SERIAL PRIMARY KEY,
-	municipio_Notificacao varchar(50), 
-	municipio_NotificacaoIBGE int UNIQUE
+	nome varchar(100),
+	municipio_ibge int UNIQUE
 );
 
 CREATE TABLE profissional_saude (
@@ -75,7 +75,7 @@ CREATE TABLE notificacao (
     estado_id INT REFERENCES estado(id),
 	pessoa_id INT REFERENCES pessoa(id),
 
-    cbo VARCHAR(20),
+    cbo VARCHAR,
 	origem varchar,
 	evolucaoCaso varchar,
 	classificacaoFinal varchar,
@@ -113,7 +113,7 @@ CREATE TABLE teste (
     codigo_estado VARCHAR(20),
     codigo_tipo VARCHAR(20),
     codigo_fabricante VARCHAR(50),
-    codigo_resultado VARCHAR(20),
+    codigo_resultado VARCHAR(50),
 
     data_coleta DATE
 );
@@ -122,7 +122,7 @@ CREATE TABLE vacinacao (
     id SERIAL PRIMARY KEY,
     notificacao_id INT REFERENCES notificacao(id) ON DELETE CASCADE,
 
-    codigo_recebeu_vacina VARCHAR(10),
+    codigo_recebeu_vacina VARCHAR(50),
 
     codigo_lab_primeira_dose VARCHAR(50),
     codigo_lab_segunda_dose VARCHAR(50),
@@ -130,7 +130,7 @@ CREATE TABLE vacinacao (
     lote_primeira_dose VARCHAR(50),
     lote_segunda_dose VARCHAR(50),
 
-    codigo_doses_vacina VARCHAR(10),
+    codigo_doses_vacina VARCHAR(50),
 
     data_primeira_dose DATE,
     data_segunda_dose DATE
@@ -140,7 +140,7 @@ CREATE TABLE triagem_populacao (
     id SERIAL PRIMARY KEY,
     notificacao_id INT REFERENCES notificacao(id) ON DELETE CASCADE,
 
-    codigo_triagem VARCHAR(20),
+    codigo_triagem VARCHAR(50),
     outro_triagem VARCHAR(100)
 );
 
@@ -160,7 +160,7 @@ CREATE TABLE local_testagem (
     id SERIAL PRIMARY KEY,
     notificacao_id INT REFERENCES notificacao(id) ON DELETE CASCADE,
 
-    codigo_local VARCHAR(20),
+    codigo_local VARCHAR(50),
     outro_local VARCHAR(100)
 );
 
@@ -242,20 +242,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-
-CREATE OR REPLACE VIEW vw_casos_por_municipio AS
-SELECT
-    m.id AS municipio_id,
-    m.municipio_notificacao AS municipio,
-    n.data_notificacao,
-    COUNT(*) AS total_notificacoes,
-    COUNT(CASE WHEN n.classificacaoFinal = 'Confirmado' THEN 1 END) AS casos_confirmados,
-    COUNT(CASE WHEN n.classificacaoFinal = 'Descartado' THEN 1 END) AS casos_descartados
-FROM notificacao n
-JOIN notificacao_municipio nm ON nm.notificacao_id = n.id
-JOIN municipio m ON m.id = nm.municipio_id
-GROUP BY m.id, m.municipio_notificacao, n.data_notificacao;
-
 CREATE OR REPLACE VIEW vw_vacinacao_por_resultado AS
 SELECT
     n.id AS notificacao_id,
@@ -277,4 +263,3 @@ JOIN sintoma s ON s.id = ns.sintoma_id
 WHERE n.classificacaoFinal = 'Confirmado'
 GROUP BY s.descricao
 ORDER BY COUNT(*) DESC;
-

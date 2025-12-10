@@ -35,13 +35,25 @@ def connect_db():
         return None
 
 def parse_date(date_str):
-    """Converte string de data para formato PostgreSQL"""
-    if pd.isna(date_str) or date_str == 'None' or not date_str:
+    if pd.isna(date_str) or date_str in (None, "", "None"):
         return None
+
+    s = str(date_str).strip()
+
+    # Tenta formato ISO (AAAA-MM-DD)
     try:
-        return datetime.strptime(str(date_str), '%d/%m/%Y').date()
+        return datetime.strptime(s, '%Y-%m-%d').date()
     except:
-        return None
+        pass
+
+    # Tenta formato padrão brasileiro (DD/MM/AAAA)
+    try:
+        return datetime.strptime(s, '%d/%m/%Y').date()
+    except:
+        pass
+
+    return None
+
 
 def parse_boolean(value):
     """Converte string para boolean"""
@@ -279,13 +291,12 @@ def insert_estados(conn, df):
     return result
 
 def insert_municipios(conn, df):
-    """10. Inserir municípios (independente)"""
     print("\n🔟 MUNICÍPIOS (tabela independente)")
     cursor = conn.cursor()
-    
+
     municipios_df = df[['municipioNotificacao', 'municipioNotificacaoIBGE']].drop_duplicates()
     municipios_data = []
-    
+
     for _, row in municipios_df.iterrows():
         if pd.notna(row['municipioNotificacaoIBGE']):
             try:
@@ -295,19 +306,22 @@ def insert_municipios(conn, df):
                 ))
             except:
                 pass
-    
+
     execute_batch(cursor, """
-        INSERT INTO municipio (municipio_Notificacao, municipio_NotificacaoIBGE)
+        INSERT INTO municipio (nome, municipio_ibge)
         VALUES (%s, %s)
-        ON CONFLICT (municipio_NotificacaoIBGE) DO NOTHING
+        ON CONFLICT (municipio_ibge) DO NOTHING
     """, municipios_data, page_size=100)
+
     conn.commit()
-    
-    cursor.execute("SELECT id, municipio_NotificacaoIBGE FROM municipio")
+
+    cursor.execute("SELECT id, municipio_ibge FROM municipio")
     result = {row[1]: row[0] for row in cursor.fetchall()}
+
     cursor.close()
     print(f"   ✅ {len(result)} registros")
     return result
+
 
 def insert_busca_ativa(conn, df):
     """11. Inserir busca ativa (independente)"""
