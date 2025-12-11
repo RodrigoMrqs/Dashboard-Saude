@@ -231,7 +231,7 @@ df_filtrado = df[df['municipio'].isin(cidade_filtro)]
 
 st.title("📊 Painel de Vigilância Epidemiológica - Pará (DB Real)")
 
-tab1, tab2, tab3, tab4 = st.tabs(["Visão Geral", "Demografia & Social", "Análise Clínica", "IA Preditiva"])
+tab1, tab2, tab3, tab4 = st.tabs(["Visão Geral", "Demografia & Social", "Análise Clínica", "Triagem"])
 
 with tab1:
     col1, col2, col3, col4 = st.columns(4)
@@ -285,7 +285,7 @@ with tab3:
         c_sint2.plotly_chart(fig_h, use_container_width=True)
 
 with tab4:
-    st.markdown("### 🤖 Triagem IA")
+    st.markdown("### Triagem - COVID 19 via IA")
     
     modelo, acuracia, feature_sintomas = treinar_modelo_sg(df)
     
