@@ -261,7 +261,17 @@ with tab3:
             st.error("Coluna 'lab_dose2' não encontrada.")
             
     st.divider()
-
+    
+with tab4:
+    st.header("Estatísticas")
+    if 'resultado' in df_filtro.columns:
+        df_c = df_filtro.copy()
+        df_c['TARGET'] = df_c['resultado'].apply(lambda x: 1 if 'POSITIVO' in x or 'COVID' in x else 0)
+        sints = ['Febre', 'Tosse', 'Dispneia']
+        if 'sintomas' in df_c.columns:
+            for s in sints: df_c[s] = df_c['sintomas'].astype(str).str.upper().apply(lambda x: 1 if s.upper() in x else 0)
+            corr = df_c[['TARGET', 'idade'] + sints].corr()
+            st.plotly_chart(px.imshow(corr, text_auto=True), use_container_width=True)
 with tab5:
     st.subheader("Triagem de Risco por IA")
     st.markdown("Calcula probabilidade de infecção baseada no perfil do paciente.")
