@@ -2,320 +2,292 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.express as px
-from sqlalchemy import create_engine
-import os
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score
 
-st.set_page_config(page_title="Painel Epidemiológico - Belém (PA)", layout="wide", page_icon="📊")
+# --- CONFIGURAÇÃO DA PÁGINA ---
+st.set_page_config(page_title="Painel Epidemiológico", layout="wide", page_icon="🏥")
 
-# --- 1. SUA FUNÇÃO DE CONEXÃO ---
-def get_db_engine():
-    try:
-        # Credenciais
-        user = 'postgres'
-        password = 'nathy2004' 
-        host = 'localhost'
-        port = '5432'
-        dbname = 'sindromegripal'
-        
-        # Cria a URL de conexão que o SQLAlchemy exige
-        url = f"postgresql+psycopg2://{user}:{password}@{host}:{port}/{dbname}"
-        
-        # Cria a Engine (O gerenciador de conexões)
-        engine = create_engine(url)
-        return engine
-    except Exception as e:
-        st.error(f"Erro ao configurar conexão: {e}")
-        return None 
-# --- 2. CONFIGURAÇÃO DE LATITUDE/LONGITUDE ---
-# (Necessário pois sua tabela 'municipio' só tem o nome, não as coordenadas)
+# --- 1. DICIONÁRIO DE COORDENADAS ---
 COORDS_PARA = {
-    'Belém': {'lat': -1.4558, 'lon': -48.5044},
-    'Ananindeua': {'lat': -1.3636, 'lon': -48.3734},
-    'Santarém': {'lat': -2.4431, 'lon': -54.7083},
-    'Marabá': {'lat': -5.3686, 'lon': -49.1174},
-    'Parauapebas': {'lat': -6.0675, 'lon': -49.9042},
-    'Castanhal': {'lat': -1.2964, 'lon': -47.9258},
-    'Abaetetuba': {'lat': -1.7218, 'lon': -48.8858},
-    'Cametá': {'lat': -2.2427, 'lon': -49.4965},
-    'Bragança': {'lat': -1.0536, 'lon': -46.7656},
-    'Altamira': {'lat': -3.2033, 'lon': -52.2025}
+    'Belém': {'lat': -1.4558, 'lon': -48.5044}, 'Ananindeua': {'lat': -1.3636, 'lon': -48.3734},
+    'Santarém': {'lat': -2.4431, 'lon': -54.7083}, 'Marabá': {'lat': -5.3686, 'lon': -49.1174},
+    'Parauapebas': {'lat': -6.0675, 'lon': -49.9042}, 'Castanhal': {'lat': -1.2964, 'lon': -47.9258},
+    'Abaetetuba': {'lat': -1.7218, 'lon': -48.8858}, 'Cametá': {'lat': -2.2427, 'lon': -49.4965},
+    'Bragança': {'lat': -1.0536, 'lon': -46.7656}, 'Altamira': {'lat': -3.2033, 'lon': -52.2025},
+    'Tucuruí': {'lat': -3.7661, 'lon': -49.6722}, 'Barcarena': {'lat': -1.5058, 'lon': -48.6258},
+    'Itaituba': {'lat': -4.2754, 'lon': -55.9869}, 'Redenção': {'lat': -8.0253, 'lon': -50.0317},
+    'Breves': {'lat': -1.6826, 'lon': -50.4811}, 'Moju': {'lat': -1.8841, 'lon': -48.7678},
+    'Novo Repartimento': {'lat': -4.2497, 'lon': -49.9482}, 'Oriximiná': {'lat': -1.7654, 'lon': -55.8661},
+    'Santa Izabel do Pará': {'lat': -1.2975, 'lon': -48.1606}, 'Capanema': {'lat': -1.1969, 'lon': -47.1814}
 }
 
-# --- 3. CARREGAMENTO DE DADOS (USANDO SUA CONEXÃO) ---
-@st.cache_data(ttl=600)
+# --- 2. CARREGAMENTO BLINDADO DE DADOS ---
+@st.cache_data
 def load_data():
-    engine = get_db_engine()
+    arquivo = 'datasetsindromegripal.csv'
+    df = pd.DataFrame()
     
-    if engine is None:
-        return pd.DataFrame()
-
-    query = """
-    SELECT 
-        n.id,
-        n.data_notificacao,
-        n.idade,
-        n.classificacaoFinal as classificacao_final,
-        n.evolucaoCaso as evolucao,
-        sx.descricao as sexo,
-        rc.descricao as raca_cor,
-        m.nome as municipio,
-        (
-            SELECT STRING_AGG(s.descricao, ',')
-            FROM notificacao_sintoma ns
-            JOIN sintoma s ON ns.sintoma_id = s.id
-            WHERE ns.notificacao_id = n.id
-        ) as sintomas,
-        'Não Informado' as escolaridade 
-    FROM notificacao n
-    LEFT JOIN pessoa p ON n.pessoa_id = p.id
-    LEFT JOIN sexo sx ON p.sexo_id = sx.id
-    LEFT JOIN raca_cor rc ON p.raca_cor_id = rc.id
-    LEFT JOIN notificacao_municipio nm ON nm.notificacao_id = n.id
-    LEFT JOIN municipio m ON nm.municipio_id = m.id
-    WHERE n.excluido IS FALSE OR n.excluido IS NULL
-    LIMIT 3000;
-    """
+    # 1. TENTATIVA DE LEITURA (Auto-detectar separador)
+    try:
+        # Tenta ler com separador automático (python engine)
+        df = pd.read_csv(arquivo, sep=None, engine='python', encoding='utf-8', on_bad_lines='skip')
+    except:
+        try:
+            # Fallback para latin1 (comum no Brasil) e ponto e vírgula
+            df = pd.read_csv(arquivo, sep=';', encoding='latin1', on_bad_lines='skip')
+        except FileNotFoundError:
+            st.error(f"❌ O arquivo '{arquivo}' não foi encontrado na pasta.")
+            st.stop()
+        except Exception as e:
+            st.error(f"❌ Erro ao ler CSV: {e}")
+            st.stop()
     
-    try:
-        # AQUI MUDOU: passamos a 'engine' e não mais a 'conn' crua
-        with engine.connect() as conn:
-            df = pd.read_sql(query, conn)
-            
-    except Exception as e:
-        st.error(f"Erro na execução da Query: {e}")
-        return pd.DataFrame()
-    # 3. Pandas lê direto do banco
-    try:
-        # AQUI MUDOU: O Pandas lê direto da 'engine'.
-        # Isso evita o erro de "Connection is closed".
-        df = pd.read_sql(query, engine)
-        
-    except Exception as e:
-        st.error(f"Erro na execução da Query: {e}")
-        return pd.DataFrame()
-
-    # Tratamento dos dados (Só executa se o DF não estiver vazio)
     if not df.empty:
-        df['data_notificacao'] = pd.to_datetime(df['data_notificacao'])
-        df['idade'] = pd.to_numeric(df['idade'], errors='coerce').fillna(0)
+        # 2. NORMALIZAÇÃO DAS COLUNAS (Tudo minúsculo e sem espaços)
+        # Isso resolve o problema de 'dataNotificacao' vs 'DataNotificacao'
+        df.columns = df.columns.str.lower().str.strip()
         
-        # Injetar Lat/Lon
-        df['lat'] = df['municipio'].map(lambda x: COORDS_PARA.get(x, {}).get('lat', None))
-        df['lon'] = df['municipio'].map(lambda x: COORDS_PARA.get(x, {}).get('lon', None))
+        # 3. MAPEAMENTO (Usando chaves em minúsculo)
+        mapa = {
+            'datanotificacao': 'data_notificacao',
+            'classificacaofinal': 'resultado',
+            'evolucaocaso': 'evolucao',
+            'racacor': 'raca_cor',
+            'codigorecebeuvacina': 'vacinado',
+            'municipio': 'municipio',
+            'idade': 'idade',
+            'sexo': 'sexo',
+            'sintomas': 'sintomas',
+            'condicoes': 'comorbidades',
+            'cbo': 'ocupacao',
+            'codigotipoteste1': 'tipo_teste',
+            'codigofabricanteteste1': 'fabricante_teste',
+            'codigoresultadoteste1': 'res_teste'
+        }
         
-        def categorizar_idade(i):
-            if i <= 12: return '0-12 (Criança)'
-            elif i <= 19: return '13-19 (Adolescente)'
-            elif i <= 59: return '20-59 (Adulto)'
-            else: return '60+ (Idoso)'
-        df['faixa_etaria'] = df['idade'].apply(categorizar_idade)
+        # Renomeia apenas as que existem
+        df = df.rename(columns=mapa)
+
+        # 4. DEBUG DE SEGURANÇA (Se a coluna principal sumiu, avisa o usuário)
+        if 'data_notificacao' not in df.columns:
+            st.error("⚠️ Erro de Colunas: O sistema não encontrou a coluna de Data.")
+            st.write("Colunas encontradas no seu arquivo:", df.columns.tolist())
+            st.stop()
+
+        # 5. TRATAMENTO DE DADOS
+        # Datas
+        df['data_notificacao'] = pd.to_datetime(df['data_notificacao'], errors='coerce')
         
-        df['sintomas'] = df['sintomas'].fillna('Assintomático')
-    
+        # Idade
+        if 'idade' in df.columns:
+            # Remove qualquer coisa que não seja número e converte
+            df['idade'] = pd.to_numeric(df['idade'].astype(str).str.replace(r'\D', '', regex=True), errors='coerce').fillna(0)
+            df['faixa_etaria'] = pd.cut(df['idade'], bins=[-1, 12, 19, 59, 120], labels=['0-12', '13-19', '20-59', '60+'])
+            
+        # Coordenadas
+        if 'municipio' in df.columns:
+            df['lat'] = df['municipio'].map(lambda x: COORDS_PARA.get(x, {}).get('lat', None))
+            df['lon'] = df['municipio'].map(lambda x: COORDS_PARA.get(x, {}).get('lon', None))
+            
+        # Normalização de Texto
+        for col in ['resultado', 'vacinado', 'res_teste', 'sexo']:
+            if col in df.columns: 
+                df[col] = df[col].astype(str).str.upper().str.strip()
+
+        # Nulos
+        if 'sintomas' in df.columns: df['sintomas'] = df['sintomas'].fillna('Assintomático')
+        if 'ocupacao' in df.columns: df['ocupacao'] = df['ocupacao'].fillna('Não Informado')
+        
     return df
 
-# Executa o carregamento
-try:
-    df = load_data()
-    if df.empty:
-        st.warning("⚠️ O banco conectou, mas a tabela está vazia ou a query não retornou dados.")
-        st.stop()
-except Exception as e:
-    st.error(f"Erro crítico: {e}")
-    st.stop()
+# Carrega os dados
+df = load_data()
 
-
-# --- 4. FUNÇÃO DE IA (TREINAMENTO) ---
+# --- 3. IA PREDITIVA ---
 @st.cache_resource
-def treinar_modelo_sg(df):
-    # 1. Lista Fixa de Sintomas (Padronizada)
-    sintomas_possiveis = [
-        'Febre', 'Tosse', 'Dor de Garganta', 'Dispneia', 
-        'Dor de Cabeça', 'Perda de Olfato/Paladar', 
-        'Mialgia (Dor no corpo)', 'Coriza', 'Fadiga'
-    ]
+def treinar_modelo(df):
+    df_mod = df.copy()
+    
+    # Target
+    df_mod['target'] = df_mod['resultado'].apply(lambda x: 1 if 'COVID' in str(x) or 'POSITIVO' in str(x) or 'CONFIRMADO' in str(x) else 0)
+    
+    # Features
+    sintomas_list = ['Febre', 'Tosse', 'Dor de Garganta', 'Dispneia', 'Dor de Cabeça', 'Perda de Olfato', 'Mialgia', 'Coriza', 'Fadiga']
+    
+    # Garante que as colunas existem antes de tentar acessar
+    if 'sintomas' not in df_mod.columns: return None, 0, []
 
-    # --- ETAPA A: PREPARAR DADOS REAIS DO BANCO ---
-    df_real = df.copy()
+    for s in sintomas_list:
+        termo = 'DOR' if s == 'Mialgia' else s
+        termo = 'OLFATO' if s == 'Olfato' else termo.upper()
+        df_mod[s] = df_mod['sintomas'].astype(str).str.upper().apply(lambda x: 1 if termo.upper() in x else 0)
     
-    # Tratamento do Target
-    def classificar_target(valor):
-        texto = str(valor).upper()
-        if 'COVID' in texto or 'POSITIVO' in texto or 'CONFIRMADO' in texto: return 1
-        return 0
+    # Vacina e Sexo
+    df_mod['vacina_feat'] = df_mod['vacinado'].apply(lambda x: 1 if 'SIM' in str(x) or '1' in str(x) else 0) if 'vacinado' in df_mod.columns else 0
+    df_mod['sexo_feat'] = df_mod['sexo'].apply(lambda x: 1 if str(x).startswith('M') else 0) if 'sexo' in df_mod.columns else 0
     
-    df_real['target'] = df_real['classificacao_final'].apply(classificar_target)
+    features = sintomas_list + ['idade', 'vacina_feat', 'sexo_feat']
     
-    # One-Hot Encoding nos dados reais
-    for s in sintomas_possiveis:
-        df_real[s] = df_real['sintomas'].apply(lambda x: 1 if s in str(x) else 0)
+    # Sintéticos para Robustez
+    dados_sint = []
+    pesos = {'Perda de Olfato': 80, 'Dispneia': 60, 'Febre': 40, 'Dor de Garganta': 30, 'Tosse': 30, 'Dor de Cabeça': 20, 'Mialgia': 20, 'Coriza': 10, 'Fadiga': 10}
+    import numpy as np
+    np.random.seed(42)
+    
+    for _ in range(300):
+        p = {'idade': np.random.randint(10, 90), 'vacina_feat': np.random.choice([0,1]), 'sexo_feat': np.random.choice([0,1])}
+        score = 0
+        for s in sintomas_list:
+            tem = np.random.choice([0, 1], p=[0.8, 0.2])
+            p[s] = tem
+            if tem: score += pesos.get(s, 10)
+        prob = 1 / (1 + np.exp(-(score - 40) / 20))
+        p['target'] = np.random.choice([1, 0], p=[prob, 1-prob])
+        dados_sint.append(p)
         
-    # --- ETAPA B: GERAR DADOS MÉDICOS SINTÉTICOS (O "CÉREBRO" DA IA) ---
-    # Aqui definimos os PESOS REAIS (Baseado em literatura médica/OMS)
-    # Quanto maior o peso, mais chance de ser COVID
-    pesos_medicos = {
-        'Perda de Olfato/Paladar': 75, # Sintoma muito específico
-        'Dispneia': 60,                # Sintoma grave
-        'Febre': 45,
-        'Tosse': 40,
-        'Fadiga': 30,
-        'Mialgia (Dor no corpo)': 25,
-        'Dor de Cabeça': 20,
-        'Dor de Garganta': 15,
-        'Coriza': 10                   # Mais comum em gripe/resfriado
-    }
+    df_final = pd.concat([df_mod[features + ['target']].dropna(), pd.DataFrame(dados_sint)])
     
-    # Geramos 500 pacientes virtuais para "ensinar" a IA
-    dados_sinteticos = []
-    np.random.seed(42) # Para o resultado ser sempre igual
-    
-    for _ in range(500):
-        perfil = {}
-        score_risco = 0
-        
-        # Simula sintomas aleatórios baseados em probabilidade
-        for s in sintomas_possiveis:
-            # Chance base de alguém ter o sintoma (ex: 20% chance de ter febre)
-            tem_sintoma = np.random.choice([0, 1], p=[0.8, 0.2])
-            perfil[s] = tem_sintoma
-            if tem_sintoma == 1:
-                score_risco += pesos_medicos.get(s, 0)
-        
-        # Idade aleatória
-        idade = np.random.randint(5, 90)
-        perfil['idade'] = idade
-        if idade > 60: score_risco += 15 # Idade aumenta risco
-        
-        # Define se é COVID baseado no score (Sigmoide simulada)
-        # Se score alto, chance alta de ser 1
-        probabilidade_real = 1 / (1 + np.exp(-(score_risco - 50) / 20))
-        perfil['target'] = np.random.choice([1, 0], p=[probabilidade_real, 1-probabilidade_real])
-        
-        dados_sinteticos.append(perfil)
-        
-    df_sintetico = pd.DataFrame(dados_sinteticos)
-    
-    # --- ETAPA C: FUNDIR DADOS REAIS + SINTÉTICOS ---
-    # Selecionamos apenas as colunas necessárias para o treino
-    cols_treino = sintomas_possiveis + ['idade', 'target']
-    
-    # Se o banco real tiver dados, usamos. Se estiver vazio, usamos só o sintético.
-    if not df_real.empty:
-        df_treino = pd.concat([df_real[cols_treino], df_sintetico[cols_treino]])
-    else:
-        df_treino = df_sintetico[cols_treino]
-
-    # --- ETAPA D: TREINAMENTO ---
-    X = df_treino[sintomas_possiveis + ['idade']]
-    y = df_treino['target']
+    X = df_final[features]
+    y = df_final['target']
     
     model = LogisticRegression(max_iter=1000)
     model.fit(X, y)
-    
-    # Para acurácia, medimos apenas nos dados SINTÉTICOS (pois são a "gabarito" médico)
-    # ou nos reais se houver muitos. Vamos medir no geral.
-    acc = model.score(X, y)
-    
-    return model, acc, sintomas_possiveis
+    return model, model.score(X, y), sintomas_list
 
+# --- 4. LAYOUT ---
+st.sidebar.title("Filtros")
+if 'municipio' in df.columns:
+    mun_sel = st.sidebar.multiselect("Município", sorted(df['municipio'].dropna().unique()), default=[])
+    df_filtro = df[df['municipio'].isin(mun_sel)] if mun_sel else df
+else:
+    df_filtro = df
 
-# --- 5. LAYOUT E VISUALIZAÇÃO ---
-st.sidebar.title("Filtros Regionais")
-lista_cidades = df['municipio'].dropna().unique()
-cidade_filtro = st.sidebar.multiselect("Município", lista_cidades, default=lista_cidades)
+st.title("Painel de Vigilância Epidemiológico ")
 
-df_filtrado = df[df['municipio'].isin(cidade_filtro)]
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Evolução & Mapa", "Demografia", "Vacinas & Testes", "Estatística", "Triagem IA"])
 
-st.title("📊 Painel de Vigilância Epidemiológica - Pará (DB Real)")
-
-tab1, tab2, tab3, tab4 = st.tabs(["Visão Geral", "Demografia & Social", "Análise Clínica", "Triagem"])
-
+# === TAB 1: GERAL ===
 with tab1:
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Notificações", len(df_filtrado))
-    col2.metric("COVID-19", len(df_filtrado[df_filtrado['classificacao_final'] == 'COVID-19']))
-    col3.metric("Influenza", len(df_filtrado[df_filtrado['classificacao_final'] == 'Influenza']))
-    col4.metric("Óbitos", len(df_filtrado[df_filtrado['evolucao'] == 'Óbito']), delta_color="inverse")
-
-    st.markdown("### Mapa de Calor - Notificações")
-    map_data = df_filtrado.dropna(subset=['lat', 'lon'])
-    if not map_data.empty:
-        st.map(map_data[['lat', 'lon']], zoom=5)
-    else:
-        st.info("Sem coordenadas para exibir o mapa.")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Notificações", len(df_filtro))
     
-    casos_tempo = df_filtrado.groupby([pd.Grouper(key='data_notificacao', freq='W'), 'classificacao_final']).size().reset_index(name='contagem')
-    fig_line = px.line(casos_tempo, x='data_notificacao', y='contagem', color='classificacao_final', title="Evolução Semanal")
-    st.plotly_chart(fig_line, use_container_width=True)
-
-with tab2:
-    st.markdown("### Perfil Sociodemográfico")
-    c1, c2 = st.columns(2)
+    # Verifica colunas antes de calcular
+    res_col = 'resultado' if 'resultado' in df_filtro.columns else None
+    ev_col = 'evolucao' if 'evolucao' in df_filtro.columns else None
     
-    # Pirâmide Etária
-    fig_pyramid = px.histogram(df_filtrado, x="idade", color="sexo", marginal="box", 
-                               nbins=20, barmode="overlay", opacity=0.7, title="Idade x Sexo")
-    c1.plotly_chart(fig_pyramid, use_container_width=True)
-
-    # Raça/Cor
-    df_raca = df_filtrado['raca_cor'].value_counts().reset_index()
-    df_raca.columns = ['Raça', 'Total']
-    fig_raca = px.bar(df_raca, x='Total', y='Raça', orientation='h', title="Raça/Cor")
-    c2.plotly_chart(fig_raca, use_container_width=True)
-
-with tab3:
-    st.markdown("### Análise de Sintomas")
-    c_sint1, c_sint2 = st.columns(2)
+    if res_col:
+        conf = len(df_filtro[df_filtro[res_col].str.contains('COVID|POSITIVO|CONFIRMADO', na=False)])
+        flu = len(df_filtro[df_filtro[res_col].str.contains('INFLUENZA|GRIPAL', na=False)])
+    else: conf, flu = 0, 0
     
-    # Sintomas Frequentes
-    sintomas_series = df_filtrado['sintomas'].str.get_dummies(sep=',')
-    if not sintomas_series.empty:
-        sintomas_sum = sintomas_series.sum().sort_values(ascending=True)
-        fig_sint = px.bar(x=sintomas_sum.values, y=sintomas_sum.index, orientation='h', title="Sintomas + Comuns")
-        c_sint1.plotly_chart(fig_sint, use_container_width=True)
+    if ev_col:
+        obitos = len(df_filtro[df_filtro[ev_col].str.contains('OBITO|ÓBITO', na=False)])
+    else: obitos = 0
     
-    # Heatmap
-    df_exploded = df_filtrado.assign(sintoma=df_filtrado['sintomas'].str.split(',')).explode('sintoma')
-    df_heat = df_exploded.groupby(['sintoma', 'classificacao_final']).size().reset_index(name='contagem')
-    if not df_heat.empty:
-        fig_h = px.scatter(df_heat, x='classificacao_final', y='sintoma', size='contagem', color='contagem', title="Correlação")
-        c_sint2.plotly_chart(fig_h, use_container_width=True)
-
-with tab4:
-    st.markdown("### Triagem - COVID 19 via IA")
+    c2.metric("Confirmados", conf)
+    c3.metric("Gripe/Influenza", flu)
+    c4.metric("Óbitos", obitos, delta_color="inverse")
     
-    modelo, acuracia, feature_sintomas = treinar_modelo_sg(df)
-    
-    if modelo is None:
-        st.warning("⚠️ **Dados insuficientes para treinar a IA.**")
-        st.info("O banco precisa ter pelo menos um caso POSITIVO e um NEGATIVO.")
-        st.write("Diagnósticos no banco hoje:", df['classificacao_final'].unique())
-    
-    else:
-        st.success(f"Modelo calibrado! Acurácia histórica: **{acuracia*100:.1f}%**")
-        
-        with st.form("ia_form"):
-            c1, c2 = st.columns([1, 3])
-            idade_in = c1.number_input("Idade", 0, 120, 30)
+    col_A, col_B = st.columns([2, 1])
+    with col_A:
+        st.markdown("### Mapa de Calor - Notificações")
+        if 'lat' in df_filtro.columns:
+            map_data = df_filtro.dropna(subset=['lat', 'lon'])
+            if not map_data.empty: st.map(map_data, latitude='lat', longitude='lon', size=20, color='#ff4b4b')
+            else: st.warning("Sem coordenadas para os filtros atuais.")
             
-            checks = {}
-            cols = c2.columns(3)
-            # Agora ele vai gerar exatamente os checkboxes da sua lista
-            for i, s in enumerate(feature_sintomas):
-                with cols[i%3]: checks[s] = st.checkbox(s)
-                
-            if st.form_submit_button("Calcular Risco"):
-                # Monta o vetor na mesma ordem da lista fixa
-                vetor = [checks[s] for s in feature_sintomas] + [idade_in]
-                
-                # Predição
-                prob = modelo.predict_proba([vetor])[0][1] * 100
-                
-                st.metric("Probabilidade COVID-19", f"{prob:.1f}%")
-                if prob > 50: 
-                    st.error("Alta Probabilidade")
-                else: 
-                    st.success("Baixa Probabilidade")
+    with col_B:
+        if 'data_notificacao' in df_filtro.columns and res_col:
+            # Agrupa e Conta
+            df_t = df_filtro.groupby([pd.Grouper(key='data_notificacao', freq='W'), res_col]).size().reset_index(name='Casos')
+            # Filtra top 5 resultados para não poluir
+            top_res = df_t.groupby(res_col)['Casos'].sum().nlargest(5).index
+            fig = px.line(df_t[df_t[res_col].isin(top_res)], x='data_notificacao', y='Casos', color=res_col, title="Curva Epidemiológica")
+            st.plotly_chart(fig, use_container_width=True)
+
+# === TAB 2: DEMOGRAFIA ===
+with tab2:
+    col_d1, col_d2 = st.columns(2)
+    with col_d1:
+        st.markdown("**Distribuição Sexo e Faixa Etária**")
+        if 'sexo' in df_filtro.columns and 'faixa_etaria' in df_filtro.columns:
+            df_sun = df_filtro.dropna(subset=['sexo', 'faixa_etaria'])
+            if not df_sun.empty:
+                st.plotly_chart(px.sunburst(df_sun, path=['sexo', 'faixa_etaria']), use_container_width=True)
+    
+    with col_d2:
+        st.markdown("**Raça/Cor**")
+        if 'raca_cor' in df_filtro.columns:
+            st.plotly_chart(px.bar(df_filtro['raca_cor'].value_counts().reset_index(), x='count', y='raca_cor', orientation='h'), use_container_width=True)
+
+    st.divider()
+    st.markdown("### Ocupações (CBO) Mais Afetadas")
+    if 'ocupacao' in df_filtro.columns:
+        top_cbo = df_filtro['ocupacao'].value_counts().head(10).reset_index()
+        st.plotly_chart(px.bar(top_cbo, x='count', y='ocupacao', orientation='h', color='count'), use_container_width=True)
+
+# === TAB 3: VACINAS ===
+with tab3:
+    c_vac, c_test = st.columns(2)
+    
+    with c_vac:
+        st.subheader("Vacinação x Resultado Laboratorial")
+        if 'vacinado' in df_filtro.columns and 'resultado' in df_filtro.columns:
+            df_v = df_filtro.copy()
+            df_v['status_vac'] = df_v['vacinado'].apply(lambda x: 'Vacinado' if 'SIM' in x or '1' in x else 'Não Vacinado')
+            df_v['status_pos'] = df_v['resultado'].apply(lambda x: 'Positivo' if 'COVID' in x or 'POSITIVO' in x else 'Negativo')
+            
+            cross = pd.crosstab(df_v['status_vac'], df_v['status_pos'], normalize='index') * 100
+            st.plotly_chart(px.bar(cross.reset_index(), x='status_vac', y=['Positivo', 'Negativo'], 
+                                   title="Taxa de Positividade (%)"), use_container_width=True)
+            
+    with c_test:
+        st.subheader("Tipos de Testes Realizados")
+        if 'tipo_teste' in df_filtro.columns:
+            top_testes = df_filtro['tipo_teste'].value_counts().head(5).reset_index()
+            st.plotly_chart(px.pie(top_testes, names='tipo_teste', values='count', hole=0.4), use_container_width=True)
+
+    st.markdown("### Eficácia por Fabricante de Teste")
+    if 'fabricante_teste' in df_filtro.columns and 'res_teste' in df_filtro.columns:
+        # Filtra apenas quem tem fabricante informado
+        df_fab = df_filtro[~df_filtro['fabricante_teste'].isin(['NAN', 'NONE', 'nan'])]
+        # Cria flag binária de positivo
+        df_fab['is_pos'] = df_fab['res_teste'].apply(lambda x: 1 if 'REAGENTE' in x or 'POSITIVO' in x or 'DETECTAVEL' in x else 0)
+        
+        # Calcula média de positividade
+        stats_fab = df_fab.groupby('fabricante_teste')['is_pos'].mean().nlargest(10).reset_index()
+        stats_fab['is_pos'] = stats_fab['is_pos'] * 100 # vira porcentagem
+        
+        st.plotly_chart(px.bar(stats_fab, x='fabricante_teste', y='is_pos', title="Taxa de Positividade por Fabricante (%)"), use_container_width=True)
+# === TAB 4: ESTATÍSTICA ===
+with tab4:
+    st.header("Estatísticas")
+    if 'resultado' in df_filtro.columns:
+        df_c = df_filtro.copy()
+        df_c['TARGET'] = df_c['resultado'].apply(lambda x: 1 if 'POSITIVO' in x or 'COVID' in x else 0)
+        sints = ['Febre', 'Tosse', 'Dispneia']
+        if 'sintomas' in df_c.columns:
+            for s in sints: df_c[s] = df_c['sintomas'].astype(str).str.upper().apply(lambda x: 1 if s.upper() in x else 0)
+            corr = df_c[['TARGET', 'idade'] + sints].corr()
+            st.plotly_chart(px.imshow(corr, text_auto=True), use_container_width=True)
+
+# === TAB 5: IA ===
+with tab5:
+    st.header("Triagem Preditiva de COVID-19")
+    modelo, acc, feats = treinar_modelo(df)
+    if modelo:
+        st.success(f"Acurácia: {acc*100:.1f}%")
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            idd = st.number_input("Idade", 0, 100, 30)
+            vac = st.selectbox("Vacinado?", ["Sim", "Não"])
+            sx = st.selectbox("Sexo", ["M", "F"])
+        with c2:
+            chks = {f: st.checkbox(f) for f in feats}
+        
+        if st.button("Calcular"):
+            vec = [int(chks[f]) for f in feats] + [idd, 1 if vac=="Sim" else 0, 1 if sx=="M" else 0]
+            prob = modelo.predict_proba([vec])[0][1] * 100
+            st.metric("Probabilidade COVID", f"{prob:.1f}%")
