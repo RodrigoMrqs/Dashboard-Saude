@@ -3,13 +3,9 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import accuracy_score
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(page_title="Painel Epidemiológico", layout="wide", page_icon="🏥")
 
-# --- 1. DICIONÁRIO DE COORDENADAS ---
 COORDS_PARA = {
     'Belém': {'lat': -1.4558, 'lon': -48.5044}, 'Ananindeua': {'lat': -1.3636, 'lon': -48.3734},
     'Santarém': {'lat': -2.4431, 'lon': -54.7083}, 'Marabá': {'lat': -5.3686, 'lon': -49.1174},
@@ -23,19 +19,15 @@ COORDS_PARA = {
     'Santa Izabel do Pará': {'lat': -1.2975, 'lon': -48.1606}, 'Capanema': {'lat': -1.1969, 'lon': -47.1814}
 }
 
-# --- 2. CARREGAMENTO BLINDADO DE DADOS ---
 @st.cache_data
 def load_data():
     arquivo = 'datasetsindromegripal.csv'
     df = pd.DataFrame()
     
-    # 1. TENTATIVA DE LEITURA (Auto-detectar separador)
     try:
-        # Tenta ler com separador automático (python engine)
         df = pd.read_csv(arquivo, sep=None, engine='python', encoding='utf-8', on_bad_lines='skip')
     except:
         try:
-            # Fallback para latin1 (comum no Brasil) e ponto e vírgula
             df = pd.read_csv(arquivo, sep=';', encoding='latin1', on_bad_lines='skip')
         except FileNotFoundError:
             st.error(f"❌ O arquivo '{arquivo}' não foi encontrado na pasta.")
@@ -45,11 +37,8 @@ def load_data():
             st.stop()
     
     if not df.empty:
-        # 2. NORMALIZAÇÃO DAS COLUNAS (Tudo minúsculo e sem espaços)
-        # Isso resolve o problema de 'dataNotificacao' vs 'DataNotificacao'
         df.columns = df.columns.str.lower().str.strip()
         
-        # 3. MAPEAMENTO (Usando chaves em minúsculo)
         mapa = {
             'datanotificacao': 'data_notificacao',
             'classificacaofinal': 'resultado',
@@ -65,61 +54,46 @@ def load_data():
             'codigotipoteste1': 'tipo_teste',
             'codigofabricanteteste1': 'fabricante_teste',
             'codigoresultadoteste1': 'res_teste',
-
             'codigolaboratorioprimeiradose': 'lab_dose1',
             'codigolaboratoriosegundadose': 'lab_dose2'
         }
         
-        # Renomeia apenas as que existem
         df = df.rename(columns=mapa)
 
-        # 4. DEBUG DE SEGURANÇA (Se a coluna principal sumiu, avisa o usuário)
         if 'data_notificacao' not in df.columns:
             st.error("⚠️ Erro de Colunas: O sistema não encontrou a coluna de Data.")
             st.write("Colunas encontradas no seu arquivo:", df.columns.tolist())
             st.stop()
 
-        # 5. TRATAMENTO DE DADOS
-        # Datas
         df['data_notificacao'] = pd.to_datetime(df['data_notificacao'], errors='coerce')
         
-        # Idade
         if 'idade' in df.columns:
-            # Remove qualquer coisa que não seja número e converte
             df['idade'] = pd.to_numeric(df['idade'].astype(str).str.replace(r'\D', '', regex=True), errors='coerce').fillna(0)
             df['faixa_etaria'] = pd.cut(df['idade'], bins=[-1, 12, 19, 59, 120], labels=['0-12', '13-19', '20-59', '60+'])
             
-        # Coordenadas
         if 'municipio' in df.columns:
             df['lat'] = df['municipio'].map(lambda x: COORDS_PARA.get(x, {}).get('lat', None))
             df['lon'] = df['municipio'].map(lambda x: COORDS_PARA.get(x, {}).get('lon', None))
             
-        # Normalização de Texto
         for col in ['resultado', 'vacinado', 'res_teste', 'sexo']:
             if col in df.columns: 
                 df[col] = df[col].astype(str).str.upper().str.strip()
 
-        # Nulos
         if 'sintomas' in df.columns: df['sintomas'] = df['sintomas'].fillna('Assintomático')
         if 'ocupacao' in df.columns: df['ocupacao'] = df['ocupacao'].fillna('Não Informado')
         
     return df
 
-# Carrega os dados
 df = load_data()
 
-# --- 3. IA PREDITIVA ---
 @st.cache_resource
 def treinar_modelo(df):
     df_mod = df.copy()
     
-    # Target
     df_mod['target'] = df_mod['resultado'].apply(lambda x: 1 if 'COVID' in str(x) or 'POSITIVO' in str(x) or 'CONFIRMADO' in str(x) else 0)
     
-    # Features
     sintomas_list = ['Febre', 'Tosse', 'Dor de Garganta', 'Dispneia', 'Dor de Cabeça', 'Perda de Olfato', 'Mialgia', 'Coriza', 'Fadiga']
     
-    # Garante que as colunas existem antes de tentar acessar
     if 'sintomas' not in df_mod.columns: return None, 0, []
 
     for s in sintomas_list:
@@ -127,13 +101,11 @@ def treinar_modelo(df):
         termo = 'OLFATO' if s == 'Olfato' else termo.upper()
         df_mod[s] = df_mod['sintomas'].astype(str).str.upper().apply(lambda x: 1 if termo.upper() in x else 0)
     
-    # Vacina e Sexo
     df_mod['vacina_feat'] = df_mod['vacinado'].apply(lambda x: 1 if 'SIM' in str(x) or '1' in str(x) else 0) if 'vacinado' in df_mod.columns else 0
     df_mod['sexo_feat'] = df_mod['sexo'].apply(lambda x: 1 if str(x).startswith('M') else 0) if 'sexo' in df_mod.columns else 0
     
     features = sintomas_list + ['idade', 'vacina_feat', 'sexo_feat']
     
-    # Sintéticos para Robustez
     dados_sint = []
     pesos = {'Perda de Olfato': 80, 'Dispneia': 60, 'Febre': 40, 'Dor de Garganta': 30, 'Tosse': 30, 'Dor de Cabeça': 20, 'Mialgia': 20, 'Coriza': 10, 'Fadiga': 10}
     import numpy as np
@@ -159,7 +131,6 @@ def treinar_modelo(df):
     model.fit(X, y)
     return model, model.score(X, y), sintomas_list
 
-# --- 4. LAYOUT ---
 st.sidebar.title("Filtros")
 if 'municipio' in df.columns:
     mun_sel = st.sidebar.multiselect("Município", sorted(df['municipio'].dropna().unique()), default=[])
@@ -171,12 +142,10 @@ st.title("Painel de Vigilância Epidemiológico ")
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["Evolução & Mapa", "Demografia", "Vacinas & Testes", "Estatística", "Triagem IA"])
 
-# === TAB 1: GERAL ===
 with tab1:
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Notificações", len(df_filtro))
     
-    # Verifica colunas antes de calcular
     res_col = 'resultado' if 'resultado' in df_filtro.columns else None
     ev_col = 'evolucao' if 'evolucao' in df_filtro.columns else None
     
@@ -203,14 +172,11 @@ with tab1:
             
     with col_B:
         if 'data_notificacao' in df_filtro.columns and res_col:
-            # Agrupa e Conta
             df_t = df_filtro.groupby([pd.Grouper(key='data_notificacao', freq='W'), res_col]).size().reset_index(name='Casos')
-            # Filtra top 5 resultados para não poluir
             top_res = df_t.groupby(res_col)['Casos'].sum().nlargest(5).index
             fig = px.line(df_t[df_t[res_col].isin(top_res)], x='data_notificacao', y='Casos', color=res_col, title="Curva Epidemiológica")
             st.plotly_chart(fig, use_container_width=True)
 
-# === TAB 2: DEMOGRAFIA ===
 with tab2:
     col_d1, col_d2 = st.columns(2)
     with col_d1:
@@ -218,7 +184,7 @@ with tab2:
         if 'sexo' in df_filtro.columns and 'faixa_etaria' in df_filtro.columns:
             df_sun = df_filtro.dropna(subset=['sexo', 'faixa_etaria'])
             if not df_sun.empty:
-                st.plotly_chart(px.sunburst(df_sun, path=['sexo', 'faixa_etaria']), use_container_width=True)
+                st.plotly_chart(px.treemap(df_sun, path=['sexo', 'faixa_etaria']), use_container_width=True)
     
     with col_d2:
         st.markdown("**Raça/Cor**")
@@ -231,13 +197,9 @@ with tab2:
         top_cbo = df_filtro['ocupacao'].value_counts().head(10).reset_index()
         st.plotly_chart(px.bar(top_cbo, x='count', y='ocupacao', orientation='h', color='count'), use_container_width=True)
 
-# === TAB 3: VACINAS ===
-# === TAB 3: VACINAS & TESTES ===
-# === TAB 3: VACINAS & TESTES ===
 with tab3:
     st.header("Panorama de Vacinação e Testagem")
     
-    # --- GRÁFICO 1: EFICÁCIA (MANTIDO) ---
     c_vac, c_test = st.columns(2)
     with c_vac:
         st.subheader("Vacinação x Infecção")
@@ -252,26 +214,21 @@ with tab3:
         st.subheader("Tipos de Testes")
         if 'tipo_teste' in df_filtro.columns:
             top = df_filtro['tipo_teste'].value_counts().head(5).reset_index()
-            st.plotly_chart(px.pie(top, names='tipo_teste', values='count', hole=0.4), use_container_width=True)
+            st.plotly_chart(px.bar(top, x='count', y='tipo_teste', orientation='h', title="Distribuição de Testes", text_auto=True), use_container_width=True)
 
     st.divider()
 
-    # --- GRÁFICO 2: LABORATÓRIOS DAS VACINAS (O QUE VOCÊ PEDIU) ---
     st.subheader("💉 Fabricantes das Vacinas Aplicadas (Top 5)")
     
     col_l1, col_l2 = st.columns(2)
     
-    # --- 1ª DOSE ---
     with col_l1:
         st.markdown("**1ª Dose**")
         if 'lab_dose1' in df_filtro.columns:
-            # Pega dados não nulos
             df_l1 = df_filtro['lab_dose1'].dropna()
-            # Remove sujeira comum
             df_l1 = df_l1[~df_l1.isin(['NAN', 'NONE', 'IGNORADO', 'EM BRANCO'])]
             
             if not df_l1.empty:
-                # Conta e pega top 5
                 top_l1 = df_l1.value_counts().head(5).reset_index()
                 top_l1.columns = ['Laboratório', 'Doses']
                 
@@ -284,7 +241,6 @@ with tab3:
         else:
             st.error("Coluna 'lab_dose1' não encontrada.")
 
-    # --- 2ª DOSE ---
     with col_l2:
         st.markdown("**2ª Dose**")
         if 'lab_dose2' in df_filtro.columns:
@@ -306,33 +262,35 @@ with tab3:
             
     st.divider()
 
-# === TAB 4: ESTATÍSTICA ===
-with tab4:
-    st.header("Estatísticas")
-    if 'resultado' in df_filtro.columns:
-        df_c = df_filtro.copy()
-        df_c['TARGET'] = df_c['resultado'].apply(lambda x: 1 if 'POSITIVO' in x or 'COVID' in x else 0)
-        sints = ['Febre', 'Tosse', 'Dispneia']
-        if 'sintomas' in df_c.columns:
-            for s in sints: df_c[s] = df_c['sintomas'].astype(str).str.upper().apply(lambda x: 1 if s.upper() in x else 0)
-            corr = df_c[['TARGET', 'idade'] + sints].corr()
-            st.plotly_chart(px.imshow(corr, text_auto=True), use_container_width=True)
-
-# === TAB 5: IA ===
 with tab5:
-    st.header("Triagem Preditiva de COVID-19")
-    modelo, acc, feats = treinar_modelo(df)
+    st.subheader("Triagem de Risco por IA")
+    st.markdown("Calcula probabilidade de infecção baseada no perfil do paciente.")
+    
+    modelo, acc, features = treinar_modelo(df)
+    
     if modelo:
-        st.success(f"Acurácia: {acc*100:.1f}%")
-        c1, c2 = st.columns([1, 2])
-        with c1:
-            idd = st.number_input("Idade", 0, 100, 30)
-            vac = st.selectbox("Vacinado?", ["Sim", "Não"])
-            sx = st.selectbox("Sexo", ["M", "F"])
-        with c2:
-            chks = {f: st.checkbox(f) for f in feats}
+        col_input, col_check = st.columns([1, 2])
         
-        if st.button("Calcular"):
-            vec = [int(chks[f]) for f in feats] + [idd, 1 if vac=="Sim" else 0, 1 if sx=="M" else 0]
-            prob = modelo.predict_proba([vec])[0][1] * 100
-            st.metric("Probabilidade COVID", f"{prob:.1f}%")
+        with col_input:
+            st.info(f"Precisão do Modelo: {acc*100:.1f}%")
+            idade_in = st.number_input("Idade", 0, 110, 30)
+            sexo_in = st.selectbox("Sexo", ["Masculino", "Feminino"])
+            vac_in = st.selectbox("Vacinado?", ["Sim", "Não"])
+            
+        with col_check:
+            st.write("Sintomas Apresentados:")
+            checks = {f: st.checkbox(f) for f in features}
+            
+        if st.button("Calcular Probabilidade", type="primary"):
+            vetor = [int(checks[f]) for f in features]
+            vetor.append(idade_in)
+            vetor.append(1 if vac_in == "Sim" else 0)
+            vetor.append(1 if sexo_in == "Masculino" else 0)
+            
+            prob = modelo.predict_proba([vetor])[0][1] * 100
+            
+            st.metric("Risco Calculado", f"{prob:.1f}%")
+            if prob > 50:
+                st.error("Risco Elevado. Recomendado isolamento e teste.")
+            else:
+                st.success("Risco Baixo. Monitore sintomas.")
