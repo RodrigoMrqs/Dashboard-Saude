@@ -64,7 +64,10 @@ def load_data():
             'cbo': 'ocupacao',
             'codigotipoteste1': 'tipo_teste',
             'codigofabricanteteste1': 'fabricante_teste',
-            'codigoresultadoteste1': 'res_teste'
+            'codigoresultadoteste1': 'res_teste',
+
+            'codigolaboratorioprimeiradose': 'lab_dose1',
+            'codigolaboratoriosegundadose': 'lab_dose2'
         }
         
         # Renomeia apenas as que existem
@@ -229,38 +232,80 @@ with tab2:
         st.plotly_chart(px.bar(top_cbo, x='count', y='ocupacao', orientation='h', color='count'), use_container_width=True)
 
 # === TAB 3: VACINAS ===
+# === TAB 3: VACINAS & TESTES ===
+# === TAB 3: VACINAS & TESTES ===
 with tab3:
-    c_vac, c_test = st.columns(2)
+    st.header("Panorama de Vacinação e Testagem")
     
+    # --- GRÁFICO 1: EFICÁCIA (MANTIDO) ---
+    c_vac, c_test = st.columns(2)
     with c_vac:
-        st.subheader("Vacinação x Resultado Laboratorial")
+        st.subheader("Vacinação x Infecção")
         if 'vacinado' in df_filtro.columns and 'resultado' in df_filtro.columns:
             df_v = df_filtro.copy()
-            df_v['status_vac'] = df_v['vacinado'].apply(lambda x: 'Vacinado' if 'SIM' in x or '1' in x else 'Não Vacinado')
-            df_v['status_pos'] = df_v['resultado'].apply(lambda x: 'Positivo' if 'COVID' in x or 'POSITIVO' in x else 'Negativo')
-            
+            df_v['status_vac'] = df_v['vacinado'].apply(lambda x: 'Vacinado' if 'SIM' in str(x) or '1' in str(x) else 'Não Vacinado')
+            df_v['status_pos'] = df_v['resultado'].apply(lambda x: 'Positivo' if 'COVID' in str(x) or 'POSITIVO' in str(x) else 'Negativo')
             cross = pd.crosstab(df_v['status_vac'], df_v['status_pos'], normalize='index') * 100
-            st.plotly_chart(px.bar(cross.reset_index(), x='status_vac', y=['Positivo', 'Negativo'], 
-                                   title="Taxa de Positividade (%)"), use_container_width=True)
-            
-    with c_test:
-        st.subheader("Tipos de Testes Realizados")
-        if 'tipo_teste' in df_filtro.columns:
-            top_testes = df_filtro['tipo_teste'].value_counts().head(5).reset_index()
-            st.plotly_chart(px.pie(top_testes, names='tipo_teste', values='count', hole=0.4), use_container_width=True)
+            st.plotly_chart(px.bar(cross.reset_index(), x='status_vac', y=['Positivo', 'Negativo'], title="Taxa de Positividade (%)"), use_container_width=True)
 
-    st.markdown("### Eficácia por Fabricante de Teste")
-    if 'fabricante_teste' in df_filtro.columns and 'res_teste' in df_filtro.columns:
-        # Filtra apenas quem tem fabricante informado
-        df_fab = df_filtro[~df_filtro['fabricante_teste'].isin(['NAN', 'NONE', 'nan'])]
-        # Cria flag binária de positivo
-        df_fab['is_pos'] = df_fab['res_teste'].apply(lambda x: 1 if 'REAGENTE' in x or 'POSITIVO' in x or 'DETECTAVEL' in x else 0)
-        
-        # Calcula média de positividade
-        stats_fab = df_fab.groupby('fabricante_teste')['is_pos'].mean().nlargest(10).reset_index()
-        stats_fab['is_pos'] = stats_fab['is_pos'] * 100 # vira porcentagem
-        
-        st.plotly_chart(px.bar(stats_fab, x='fabricante_teste', y='is_pos', title="Taxa de Positividade por Fabricante (%)"), use_container_width=True)
+    with c_test:
+        st.subheader("Tipos de Testes")
+        if 'tipo_teste' in df_filtro.columns:
+            top = df_filtro['tipo_teste'].value_counts().head(5).reset_index()
+            st.plotly_chart(px.pie(top, names='tipo_teste', values='count', hole=0.4), use_container_width=True)
+
+    st.divider()
+
+    # --- GRÁFICO 2: LABORATÓRIOS DAS VACINAS (O QUE VOCÊ PEDIU) ---
+    st.subheader("💉 Fabricantes das Vacinas Aplicadas (Top 5)")
+    
+    col_l1, col_l2 = st.columns(2)
+    
+    # --- 1ª DOSE ---
+    with col_l1:
+        st.markdown("**1ª Dose**")
+        if 'lab_dose1' in df_filtro.columns:
+            # Pega dados não nulos
+            df_l1 = df_filtro['lab_dose1'].dropna()
+            # Remove sujeira comum
+            df_l1 = df_l1[~df_l1.isin(['NAN', 'NONE', 'IGNORADO', 'EM BRANCO'])]
+            
+            if not df_l1.empty:
+                # Conta e pega top 5
+                top_l1 = df_l1.value_counts().head(5).reset_index()
+                top_l1.columns = ['Laboratório', 'Doses']
+                
+                fig1 = px.bar(top_l1, x='Doses', y='Laboratório', orientation='h', 
+                              color='Doses', color_continuous_scale='Blues', text_auto=True)
+                fig1.update_layout(yaxis={'categoryorder':'total ascending'})
+                st.plotly_chart(fig1, use_container_width=True)
+            else:
+                st.warning("Dados de laboratório (1ª Dose) vazios após limpeza.")
+        else:
+            st.error("Coluna 'lab_dose1' não encontrada.")
+
+    # --- 2ª DOSE ---
+    with col_l2:
+        st.markdown("**2ª Dose**")
+        if 'lab_dose2' in df_filtro.columns:
+            df_l2 = df_filtro['lab_dose2'].dropna()
+            df_l2 = df_l2[~df_l2.isin(['NAN', 'NONE', 'IGNORADO', 'EM BRANCO'])]
+            
+            if not df_l2.empty:
+                top_l2 = df_l2.value_counts().head(5).reset_index()
+                top_l2.columns = ['Laboratório', 'Doses']
+                
+                fig2 = px.bar(top_l2, x='Doses', y='Laboratório', orientation='h', 
+                              color='Doses', color_continuous_scale='Greens', text_auto=True)
+                fig2.update_layout(yaxis={'categoryorder':'total ascending'})
+                st.plotly_chart(fig2, use_container_width=True)
+            else:
+                st.warning("Dados de laboratório (2ª Dose) vazios após limpeza.")
+        else:
+            st.error("Coluna 'lab_dose2' não encontrada.")
+            
+    st.divider()
+
 # === TAB 4: ESTATÍSTICA ===
 with tab4:
     st.header("Estatísticas")
