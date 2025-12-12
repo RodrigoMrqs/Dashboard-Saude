@@ -183,7 +183,7 @@ with tab1:
     else: conf, flu = 0, 0
     
     if ev_col:
-        obitos = len(df_filtro[df_filtro[ev_col].str.contains('OBITO|ÓBITO', na=False)])
+        obitos = len(df_filtro[df_filtro['evolucao'].astype(str).str.contains('Óbito', case=False, na=False)])
     else: obitos = 0
     
     c2.metric("Confirmados", conf)
